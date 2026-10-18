@@ -59,32 +59,28 @@ jobs:
           # 移除无效的签名文件（爱思助手会重新签名）
           rm -rf build/Payload/App.app/_CodeSignature
           rm -f build/Payload/App.app/embedded.mobileprovision
-          # 打包为 IPA
+          # 打包为 IPA（输出到仓库根目录）
           cd build
-          zip -qr ../../Folia-unsigned.ipa Payload
-          cd ../..
+          zip -qr "$GITHUB_WORKSPACE/Folia-unsigned.ipa" Payload
+          cd "$GITHUB_WORKSPACE"
           echo "IPA size: $(du -h Folia-unsigned.ipa | cut -f1)"
 
       - name: Verify IPA structure
         run: |
+          cd "$GITHUB_WORKSPACE"
+          echo "=== IPA exists? ==="
+          ls -lh Folia-unsigned.ipa
+          echo ""
           echo "=== IPA contents (top level) ==="
           unzip -l Folia-unsigned.ipa | head -5
           echo ""
-          echo "=== App bundle contents ==="
-          unzip -l Folia-unsigned.ipa | grep "Payload/App.app/" | grep -v "public/" | head -20
-          echo ""
           echo "=== Binary architecture check ==="
-          cd ios/App/build/Payload
-          file App.app/App 2>/dev/null || echo "(binary check done in Payload)"
-          cd ../../../..
+          unzip -p Folia-unsigned.ipa Payload/App.app/App > /tmp/AppBinary
+          file /tmp/AppBinary
           echo ""
           echo "=== Info.plist key fields ==="
-          unzip -p Folia-unsigned.ipa Payload/App.app/Info.plist | plutil -convert json -o - - 2>/dev/null | python3 -c "
-          import sys,json
-          d=json.load(sys.stdin)
-          for k in ['CFBundleIdentifier','CFBundleDisplayName','CFBundleShortVersionString','MinimumOSVersion','UIBackgroundModes']:
-              print(f'{k}: {d.get(k,\"N/A\")}')
-          "
+          unzip -p Folia-unsigned.ipa Payload/App.app/Info.plist > /tmp/Info.plist
+          plutil -p /tmp/Info.plist 2>/dev/null | grep -E "CFBundleIdentifier|CFBundleDisplayName|CFBundleShortVersionString|MinimumOSVersion|UIBackgroundModes" || echo "(plutil check done)"
 
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
