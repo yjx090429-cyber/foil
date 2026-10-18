@@ -1,0 +1,56 @@
+# Codemagic 配置 — 构建 Folia 无签名 IPA（用于爱思助手签名）
+# 使用方法：
+# 1. 注册 https://codemagic.io（免费 500 分钟/月）
+# 2. 连接 GitHub 仓库
+# 3. 选择此 codemagic.yaml 配置运行
+# 4. 下载构建产物中的 unsigned IPA
+
+workflows:
+  folia-ios-unsigned:
+    name: Folia iOS Unsigned IPA
+    max_build_duration: 45
+    environment:
+      xcode: latest
+      node: 24
+      groups:
+        - folia_credentials
+    scripts:
+      - name: Install dependencies
+        script: npm ci --no-audit --no-fund
+      - name: Build web assets (Capacitor mode)
+        script: npm run build:capacitor
+      - name: Sync iOS platform
+        script: npx cap sync ios
+      - name: Generate iOS icons
+        script: |
+          if [ ! -f assets/icon.png ]; then
+            node -e "require('sharp')('build/icon.png').resize(1024,1024).png().toFile('assets/icon.png')"
+          fi
+          npx capacitor-assets generate --ios --iconBackgroundColor '#09090b' --splashBackgroundColor '#09090b'
+      - name: Build unsigned .app
+        script: |
+          cd ios/App
+          xcodebuild \
+            -scheme App \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/Folia.xcarchive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_ENTITLEMENTS="" \
+            archive
+      - name: Package IPA
+        script: |
+          cd ios/App
+          mkdir -p build/Payload
+          cp -R build/Folia.xcarchive/Products/Applications/App.app build/Payload/
+          rm -rf build/Payload/App.app/_CodeSignature
+          rm -f build/Payload/App.app/embedded.mobileprovision
+          cd build
+          zip -qr ../../Folia-unsigned.ipa Payload
+    artifacts:
+      - Folia-unsigned.ipa
+    publishing:
+      email:
+        recipients:
+          - $EMAIL

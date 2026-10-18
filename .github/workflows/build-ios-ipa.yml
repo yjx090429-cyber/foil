@@ -1,0 +1,95 @@
+name: Build iOS IPA (Unsigned for 爱思助手)
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build-ios-unsigned:
+    name: Build Unsigned Folia IPA
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Build web assets (Capacitor mode)
+        run: npm run build:capacitor
+
+      - name: Sync iOS platform
+        run: npx cap sync ios
+
+      - name: Generate iOS icons & splash
+        run: |
+          if [ ! -f assets/icon.png ]; then
+            node -e "require('sharp')('build/icon.png').resize(1024,1024).png().toFile('assets/icon.png')"
+          fi
+          npx capacitor-assets generate --ios --iconBackgroundColor '#09090b' --splashBackgroundColor '#09090b'
+
+      - name: Build unsigned .app (no code signing)
+        run: |
+          cd ios/App
+          xcodebuild \
+            -scheme App \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/Folia.xcarchive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_ENTITLEMENTS="" \
+            archive
+
+      - name: Package into IPA (爱思助手可签名格式)
+        run: |
+          cd ios/App
+          # 标准 IPA 结构：Payload/App.app/
+          mkdir -p build/Payload
+          cp -R build/Folia.xcarchive/Products/Applications/App.app build/Payload/
+          # 移除无效的签名文件（爱思助手会重新签名）
+          rm -rf build/Payload/App.app/_CodeSignature
+          rm -f build/Payload/App.app/embedded.mobileprovision
+          # 打包为 IPA
+          cd build
+          zip -qr ../../Folia-unsigned.ipa Payload
+          cd ../..
+          echo "IPA size: $(du -h Folia-unsigned.ipa | cut -f1)"
+
+      - name: Verify IPA structure
+        run: |
+          echo "=== IPA contents (top level) ==="
+          unzip -l Folia-unsigned.ipa | head -5
+          echo ""
+          echo "=== App bundle contents ==="
+          unzip -l Folia-unsigned.ipa | grep "Payload/App.app/" | grep -v "public/" | head -20
+          echo ""
+          echo "=== Binary architecture check ==="
+          cd ios/App/build/Payload
+          file App.app/App 2>/dev/null || echo "(binary check done in Payload)"
+          cd ../../../..
+          echo ""
+          echo "=== Info.plist key fields ==="
+          unzip -p Folia-unsigned.ipa Payload/App.app/Info.plist | plutil -convert json -o - - 2>/dev/null | python3 -c "
+          import sys,json
+          d=json.load(sys.stdin)
+          for k in ['CFBundleIdentifier','CFBundleDisplayName','CFBundleShortVersionString','MinimumOSVersion','UIBackgroundModes']:
+              print(f'{k}: {d.get(k,\"N/A\")}')
+          "
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Folia-unsigned-ipa
+          path: Folia-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 90
