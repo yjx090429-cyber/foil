@@ -3,6 +3,7 @@ import { OnlineProviderError } from '../../../types/onlineMusic';
 import { readProviderSessionValue, removeProviderSessionValue, writeProviderSessionValue } from '../providerStorage';
 import { lyricProxyWebUrl, requestLyricProxyOnDesktop } from '../../lyricProxy';
 import { withLoginRequestLimit } from '../login/loginRequestLimit';
+import { getApiBaseFromStorage } from '../apiBaseStorage';
 
 // src/services/onlineMusic/kugou/kugouTransport.ts
 
@@ -62,6 +63,10 @@ const ENDPOINTS: Record<KugouOperation, string> = {
 };
 
 const getWebApiBase = (): string => {
+    // iOS/网页版优先用用户在设置里填的地址（localStorage）
+    const fromStorage = getApiBaseFromStorage('kugou');
+    if (fromStorage) return fromStorage;
+
     const viteValue = typeof import.meta !== 'undefined' && import.meta.env?.MODE !== 'test'
         ? String((import.meta as ImportMeta & { env?: Record<string, string> }).env?.VITE_KUGOU_API_BASE || '')
         : '';

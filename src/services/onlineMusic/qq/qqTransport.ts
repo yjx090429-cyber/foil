@@ -2,6 +2,7 @@ import { OnlineProviderError } from '../../../types/onlineMusic';
 import { readProviderSessionValue, removeProviderSessionValue, writeProviderSessionValue } from '../providerStorage';
 import { withLoginRequestLimit } from '../login/loginRequestLimit';
 import { withOnlineRequestLimit } from '../failure/onlineRequestLimit';
+import { getApiBaseFromStorage } from '../apiBaseStorage';
 
 // src/services/onlineMusic/qq/qqTransport.ts
 
@@ -106,6 +107,10 @@ export const QQ_ONLINE_REQUEST_LIMIT_MS = 70_000;
 const QR_CONFIRMED_CODE = 803;
 
 const getWebApiBase = (): string => {
+    // iOS/网页版优先用用户在设置里填的地址（localStorage）
+    const fromStorage = getApiBaseFromStorage('qq');
+    if (fromStorage) return fromStorage;
+
     const viteValue = typeof import.meta !== 'undefined' && import.meta.env?.MODE !== 'test'
         ? String((import.meta as ImportMeta & { env?: Record<string, string> }).env?.VITE_QQ_API_BASE || '')
         : '';
