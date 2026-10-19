@@ -4,6 +4,26 @@ on:
   push:
     branches: [main, master]
   workflow_dispatch:
+    inputs:
+      netease_api_base:
+        description: 'VITE_NETEASE_API_BASE（留空用默认隧道地址）'
+        required: false
+        default: ''
+      qq_api_base:
+        description: 'VITE_QQ_API_BASE（留空用默认隧道地址）'
+        required: false
+        default: ''
+      kugou_api_base:
+        description: 'VITE_KUGOU_API_BASE（留空用默认隧道地址）'
+        required: false
+        default: ''
+
+env:
+  # 构建期写死的后端地址；应用内「设置 → 连接与集成 → 音乐平台后端」填的地址优先级更高，可随时覆盖。
+  # 隧道地址是临时的，失效后重新触发构建（workflow_dispatch 可传新地址）即可。
+  VITE_NETEASE_API_BASE: ${{ inputs.netease_api_base || 'https://happy-biz-informative-victoria.trycloudflare.com/netease' }}
+  VITE_QQ_API_BASE: ${{ inputs.qq_api_base || 'https://happy-biz-informative-victoria.trycloudflare.com/qq' }}
+  VITE_KUGOU_API_BASE: ${{ inputs.kugou_api_base || 'https://happy-biz-informative-victoria.trycloudflare.com/kugou' }}
 
 jobs:
   build-ios-unsigned:
