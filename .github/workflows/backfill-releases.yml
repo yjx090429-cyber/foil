@@ -1,0 +1,82 @@
+name: Backfill historical test releases
+
+# 一次性工具：把历史构建产物按时间顺序补发成测试版 Release（v1.0.1 起递增）。
+# 只手动触发，避免与日常构建冲突。回补完成后可删除本文件。
+on:
+  workflow_dispatch:
+    inputs:
+      run_ids:
+        description: '按时间正序排列的 run id，逗号分隔（最早的排第一，将得到 v1.0.1）'
+        required: true
+      start_version:
+        description: '起始版本号（形如 1.0.1）'
+        required: false
+        default: '1.0.1'
+
+jobs:
+  backfill:
+    name: Backfill releases from past runs
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+
+    steps:
+      - name: Create one pre-release per historical run
+        env:
+          RUN_IDS: ${{ inputs.run_ids }}
+          START_VERSION: ${{ inputs.start_version }}
+        run: |
+          set -euo pipefail
+          IFS=',' read -ra ids <<< "$RUN_IDS"
+          # 起始版本的补丁位作为计数起点，逐个 +1
+          patch="${START_VERSION##*.}"
+          for id in "${ids[@]}"; do
+            id="$(echo "$id" | tr -d ' ')"
+            [ -z "$id" ] && continue
+
+            version="1.0.${patch}"
+            echo "::group::run $id -> v$version"
+
+            rm -rf dl && mkdir -p dl
+            gh run download "$id" --repo "$REPO" -n Folia-unsigned-ipa -D dl
+
+            created=$(gh api "repos/$REPO/actions/runs/$id" --jq '.created_at')
+            sha=$(gh api "repos/$REPO/actions/runs/$id" --jq '.head_sha')
+            date=$(TZ=Asia/Shanghai date -d "$created" +%Y%m%d)
+
+            asset="Folia-${version}-${date}-unsigned.ipa"
+            mv dl/Folia-unsigned.ipa "$asset"
+
+            cat > notes.md <<EOF
+          # Folia iOS 测试版 v${version}
+
+          > 测试版（pre-release），未签名 IPA，需自行用爱思助手签名后安装。
+
+          | 项目 | 值 |
+          | --- | --- |
+          | 版本 | v${version} |
+          | 构建日期 | ${date} |
+          | 提交 | \`${sha:0:7}\` |
+          | 来源运行 | [run ${id}](${GITHUB_SERVER_URL}/${REPO}/actions/runs/${id}) |
+
+          ## 安装
+
+          1. 下载下方的 \`*.ipa\` 文件
+          2. 爱思助手 → 工具箱 → IPA 签名 → 使用 Apple ID 签名
+          3. 签名后安装（可直接覆盖旧版本）
+          EOF
+
+            gh release create "v${version}" "$asset" \
+              --repo "$REPO" \
+              --target "$sha" \
+              --title "Folia 测试版 v${version} (${date})" \
+              --notes-file notes.md \
+              --prerelease
+
+            echo "已发布 v${version} <- run $id"
+            echo "::endgroup::"
+            patch=$((patch + 1))
+          done

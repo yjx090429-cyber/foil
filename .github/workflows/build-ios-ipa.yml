@@ -109,3 +109,104 @@ jobs:
           path: Folia-unsigned.ipa
           if-no-files-found: error
           retention-days: 90
+
+  # 每次构建成功后自动发一个带版本号的测试版 Release：
+  # 版本从 1.0 起，之后按 1.0.1、1.0.2 递增；全部标记为 pre-release（测试版）。
+  publish-test-release:
+    name: Publish versioned test release
+    needs: build-ios-unsigned
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: folia-ios-release
+      cancel-in-progress: false
+
+    steps:
+      - name: Download IPA artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Folia-unsigned-ipa
+          path: ipa
+
+      - name: Compute next version
+        id: ver
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # 已发布的版本形如 v1.0.1 / v1.0.2，取最大的一版，下一版 = 最大 + 1
+          latest=$(gh release list --repo "$REPO" --limit 500 --json tagName \
+            --jq '.[].tagName' \
+            | grep -E '^v1\.0\.[0-9]+$' \
+            | sed 's/^v//' \
+            | sort -t. -k3,3n \
+            | tail -1 || true)
+          if [ -z "$latest" ]; then
+            version="1.0.1"
+          else
+            patch="${latest##*.}"
+            version="1.0.$((patch + 1))"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          echo "上一版: ${latest:-无} -> 本次: $version"
+
+      - name: Rename IPA with version and date
+        id: asset
+        run: |
+          set -euo pipefail
+          version="${{ steps.ver.outputs.version }}"
+          date="$(TZ=Asia/Shanghai date +%Y%m%d)"
+          asset="Folia-${version}-${date}-unsigned.ipa"
+          mv ipa/Folia-unsigned.ipa "$asset"
+          echo "asset=$asset" >> "$GITHUB_OUTPUT"
+          echo "date=$date" >> "$GITHUB_OUTPUT"
+          ls -lh "$asset"
+
+      - name: Write release notes
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          BUILD_DATE: ${{ steps.asset.outputs.date }}
+        run: |
+          cat > RELEASE_NOTES.md <<EOF
+          # Folia iOS 测试版 v${VERSION}
+
+          > 测试版（pre-release），未签名 IPA，需自行用爱思助手签名后安装。
+
+          | 项目 | 值 |
+          | --- | --- |
+          | 版本 | v${VERSION} |
+          | 构建日期 | ${BUILD_DATE} |
+          | 提交 | \`${{ github.sha }}\` |
+          | 运行 | [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) |
+
+          ## 内置后端地址
+
+          - 网易云：${{ env.VITE_NETEASE_API_BASE }}
+          - QQ 音乐：${{ env.VITE_QQ_API_BASE }}
+          - 酷狗：${{ env.VITE_KUGOU_API_BASE }}
+
+          应用内「设置 → 连接与集成 → 音乐平台后端」可覆盖以上地址，无需重新打包。
+
+          ## 安装
+
+          1. 下载下方的 \`*.ipa\` 文件
+          2. 爱思助手 → 工具箱 → IPA 签名 → 使用 Apple ID 签名
+          3. 签名后安装（可直接覆盖旧版本）
+          EOF
+
+      - name: Create pre-release with IPA asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh release create "${{ steps.ver.outputs.tag }}" \
+            "${{ steps.asset.outputs.asset }}" \
+            --repo "$REPO" \
+            --target "${{ github.sha }}" \
+            --title "Folia 测试版 v${{ steps.ver.outputs.version }} (${{ steps.asset.outputs.date }})" \
+            --notes-file RELEASE_NOTES.md \
+            --prerelease
